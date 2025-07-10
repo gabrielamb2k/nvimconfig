@@ -130,6 +130,7 @@ return {
 		config = function()
 			-- get access to the lspconfig plugins functions
 			local lspconfig = require("lspconfig")
+			local util = require("lspconfig.util")
 
 			local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
@@ -147,9 +148,18 @@ return {
 				capabilities = capabilities,
 			})
 
-			-- setup the go language server
+			-- setup the go language server with proper root_dir configuration
 			lspconfig.gopls.setup({
 				capabilities = capabilities,
+				-- Use the built-in root_dir function which is more robust
+				root_dir = util.root_pattern("go.mod", "go.sum", ".git"),
+				-- Ensure we're only attaching to Go files
+				filetypes = { "go", "gomod", "gowork", "gotmpl" },
+				-- Add on_attach function to handle buffer-specific setup
+				on_attach = function(client, bufnr)
+					-- Enable completion triggered by <c-x><c-o>
+					vim.api.nvim_buf_set_option(bufnr, 'omnifunc', 'v:lua.vim.lsp.omnifunc')
+				end,
 				settings = {
 					gopls = {
 						analyses = {
@@ -157,6 +167,11 @@ return {
 						},
 						staticcheck = true,
 						gofumpt = true,
+						-- Additional settings for better Go support
+						usePlaceholders = true,
+						completeUnimported = true,
+						matcher = "fuzzy",
+						deepCompletion = true,
 					},
 				},
 			})
