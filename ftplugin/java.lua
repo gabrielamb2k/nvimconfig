@@ -53,6 +53,7 @@ local function get_workspace()
 end
 
 local function java_keymaps()
+  vim.notify("keymaps")
     -- Allow yourself to run JdtCompile as a Vim command
     vim.cmd(
     "command! -buffer -nargs=? -complete=custom,v:lua.require'jdtls'._complete_compile JdtCompile lua require('jdtls').compile(<f-args>)")
