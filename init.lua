@@ -29,3 +29,8 @@ require("config.vim-keymap")
 require("config.autocmds")
 
 require("lazy").setup("plugins", opts)
+vim.lsp.set_log_level("warn")
+
+-- Silenciar erros de document highlight
+vim.lsp.handlers["textDocument/documentHighlight"] = function() end
+vim.lsp.handlers["textDocument/documentHighlightClear"] = function() end

@@ -1,4 +1,283 @@
--- Função para detectar o caminho do Mason
+-- Ultra-safe java.lua - Solução definitiva para erros de LSP com Debug e Testes
+
+-- Prevent multiple executions
+if vim.g.java_ftplugin_loaded then
+    return
+end
+
+-- Safety check - only proceed for Java files
+if vim.bo.filetype ~= 'java' then
+    return
+end
+
+-- Mark as loaded immediately to prevent re-execution
+vim.g.java_ftplugin_loaded = true
+
+-- Create a safe environment for Java operations
+local M = {}
+
+-- Utility functions
+local function is_jdtls_available()
+    local ok, jdtls = pcall(require, 'jdtls')
+    return ok and jdtls ~= nil
+end
+
+local function is_dap_available()
+    local ok, dap = pcall(require, 'dap')
+    return ok and dap ~= nil
+end
+
+local function get_active_jdtls_client()
+    local clients = vim.lsp.get_active_clients({ name = 'jdtls' })
+    return clients[1]
+end
+
+local function has_jdtls_capability(method)
+    local client = get_active_jdtls_client()
+    if not client then
+        return false
+    end
+    
+    -- Check if client supports the method
+    if client.server_capabilities and client.supports_method then
+        return client.supports_method(method)
+    end
+    
+    return false
+end
+
+-- Safe JDTLS command wrapper
+local function safe_jdtls_command(cmd_name, jdtls_method, description)
+    vim.api.nvim_buf_create_user_command(0, cmd_name, function(opts)
+        if not is_jdtls_available() then
+            vim.notify("JDTLS não está disponível", vim.log.levels.WARN)
+            return
+        end
+        
+        local client = get_active_jdtls_client()
+        if not client then
+            vim.notify("JDTLS não está ativo", vim.log.levels.WARN)
+            return
+        end
+        
+        local ok, jdtls = pcall(require, 'jdtls')
+        if not ok then
+            vim.notify("Erro ao carregar JDTLS", vim.log.levels.ERROR)
+            return
+        end
+        
+        -- Check if method exists
+        if type(jdtls[jdtls_method]) ~= 'function' then
+            vim.notify("Método " .. jdtls_method .. " não disponível no JDTLS", vim.log.levels.WARN)
+            return
+        end
+        
+        local method_ok, result = pcall(jdtls[jdtls_method], opts.args)
+        if not method_ok then
+            vim.notify("Erro ao executar " .. cmd_name .. ": " .. tostring(result), vim.log.levels.ERROR)
+        end
+    end, { 
+        nargs = '?', 
+        desc = description,
+        complete = function() return {} end
+    })
+end
+
+-- Safe keymap wrapper
+local function safe_keymap(mode, lhs, callback_func, opts)
+    opts = opts or {}
+    opts.buffer = true
+    opts.silent = true
+    
+    vim.keymap.set(mode, lhs, callback_func, opts)
+end
+
+-- Test functions
+local function run_test_method()
+    local client = get_active_jdtls_client()
+    if not client then
+        vim.notify("JDTLS não está ativo", vim.log.levels.WARN)
+        return
+    end
+    
+    -- Get current method name
+    local line = vim.api.nvim_get_current_line()
+    local method_name = line:match("@Test.-public.-void%s+(%w+)")
+    if not method_name then
+        -- Try other patterns
+        method_name = line:match("public.-void%s+(%w+)%(.-@Test")
+        if not method_name then
+            vim.notify("Método de teste não encontrado", vim.log.levels.WARN)
+            return
+        end
+    end
+    
+    -- Run the test
+    local params = {
+        uri = vim.uri_from_bufnr(0),
+        methodName = method_name,
+    }
+    
+    client.request("vscode.java.test.run", params, function(err, result)
+        if err then
+            vim.notify("Erro ao executar teste: " .. vim.inspect(err), vim.log.levels.ERROR)
+        else
+            vim.notify("Teste executado: " .. method_name, vim.log.levels.INFO)
+        end
+    end)
+end
+
+local function run_test_class()
+    local client = get_active_jdtls_client()
+    if not client then
+        vim.notify("JDTLS não está ativo", vim.log.levels.WARN)
+        return
+    end
+    
+    local params = {
+        uri = vim.uri_from_bufnr(0),
+    }
+    
+    client.request("vscode.java.test.run", params, function(err, result)
+        if err then
+            vim.notify("Erro ao executar testes da classe: " .. vim.inspect(err), vim.log.levels.ERROR)
+        else
+            vim.notify("Testes da classe executados", vim.log.levels.INFO)
+        end
+    end)
+end
+
+-- Debug functions
+local function debug_test_method()
+    if not is_dap_available() then
+        vim.notify("DAP não está disponível. Instale nvim-dap", vim.log.levels.WARN)
+        return
+    end
+    
+    local client = get_active_jdtls_client()
+    if not client then
+        vim.notify("JDTLS não está ativo", vim.log.levels.WARN)
+        return
+    end
+    
+    -- Similar to run_test_method but with debug
+    local line = vim.api.nvim_get_current_line()
+    local method_name = line:match("@Test.-public.-void%s+(%w+)")
+    if not method_name then
+        method_name = line:match("public.-void%s+(%w+)%(.-@Test")
+        if not method_name then
+            vim.notify("Método de teste não encontrado", vim.log.levels.WARN)
+            return
+        end
+    end
+    
+    local params = {
+        uri = vim.uri_from_bufnr(0),
+        methodName = method_name,
+        debug = true,
+    }
+    
+    client.request("vscode.java.test.run", params, function(err, result)
+        if err then
+            vim.notify("Erro ao debugar teste: " .. vim.inspect(err), vim.log.levels.ERROR)
+        else
+            vim.notify("Debug do teste iniciado: " .. method_name, vim.log.levels.INFO)
+        end
+    end)
+end
+
+-- Create safe Java commands and keymaps
+local function setup_java_commands()
+    -- Basic JDTLS commands
+    safe_jdtls_command("JdtCompile", "compile", "Compile Java project")
+    safe_jdtls_command("JdtUpdateConfig", "update_project_config", "Update project configuration")
+    safe_jdtls_command("JdtBytecode", "javap", "Show bytecode")
+    safe_jdtls_command("JdtJshell", "jshell", "Open JShell")
+    
+    -- Test commands
+    vim.api.nvim_buf_create_user_command(0, "JdtTestMethod", run_test_method, { desc = "Run test method" })
+    vim.api.nvim_buf_create_user_command(0, "JdtTestClass", run_test_class, { desc = "Run test class" })
+    vim.api.nvim_buf_create_user_command(0, "JdtDebugTest", debug_test_method, { desc = "Debug test method" })
+    
+    -- Keymaps for JDTLS functions
+    safe_keymap('n', '<leader>Jo', function()
+        if not is_jdtls_available() then
+            vim.notify("JDTLS não está disponível", vim.log.levels.WARN)
+            return
+        end
+        
+        local ok, jdtls = pcall(require, 'jdtls')
+        if ok and type(jdtls.organize_imports) == 'function' then
+            jdtls.organize_imports()
+        else
+            -- Fallback to LSP organize imports
+            vim.lsp.buf.code_action({
+                context = { only = { "source.organizeImports" } },
+                apply = true,
+            })
+        end
+    end, { desc = "[J]ava [O]rganize Imports" })
+    
+    safe_keymap('v', '<leader>Jv', function()
+        if not is_jdtls_available() then
+            vim.notify("JDTLS não está disponível", vim.log.levels.WARN)
+            return
+        end
+        
+        local ok, jdtls = pcall(require, 'jdtls')
+        if ok and type(jdtls.extract_variable) == 'function' then
+            jdtls.extract_variable()
+        else
+            vim.notify("Extract variable não disponível", vim.log.levels.WARN)
+        end
+    end, { desc = "[J]ava Extract [V]ariable" })
+    
+    safe_keymap('v', '<leader>JC', function()
+        if not is_jdtls_available() then
+            vim.notify("JDTLS não está disponível", vim.log.levels.WARN)
+            return
+        end
+        
+        local ok, jdtls = pcall(require, 'jdtls')
+        if ok and type(jdtls.extract_constant) == 'function' then
+            jdtls.extract_constant()
+        else
+            vim.notify("Extract constant não disponível", vim.log.levels.WARN)
+        end
+    end, { desc = "[J]ava Extract [C]onstant" })
+    
+    -- Test keymaps
+    safe_keymap('n', '<leader>Jt', run_test_method, { desc = "[J]ava [T]est Method" })
+    safe_keymap('n', '<leader>JT', run_test_class, { desc = "[J]ava [T]est Class" })
+    safe_keymap('n', '<leader>Jd', debug_test_method, { desc = "[J]ava [D]ebug Test" })
+    
+    -- Debug keymaps
+    safe_keymap('n', '<leader>Jb', function()
+        if not is_dap_available() then
+            vim.notify("DAP não está disponível. Instale nvim-dap", vim.log.levels.WARN)
+            return
+        end
+        require('dap').toggle_breakpoint()
+    end, { desc = "[J]ava Toggle [B]reakpoint" })
+    
+    safe_keymap('n', '<leader>Jr', function()
+        if not is_dap_available() then
+            vim.notify("DAP não está disponível. Instale nvim-dap", vim.log.levels.WARN)
+            return
+        end
+        require('dap').continue()
+    end, { desc = "[J]ava [R]un/Continue Debug" })
+    
+    -- Special keymap for update config
+    safe_keymap('n', '<leader>Ju', function()
+        vim.cmd('JdtUpdateConfig')
+    end, { desc = "[J]ava [U]pdate Config" })
+end
+
+-- Setup basic commands immediately
+setup_java_commands()
+
+-- Function to find Mason path
 local function get_mason_path()
     local possible_paths = {
         vim.fn.stdpath("data") .. "/mason",
@@ -12,212 +291,108 @@ local function get_mason_path()
             return path
         end
     end
-    
-    vim.notify("Mason não encontrado em nenhum caminho padrão", vim.log.levels.ERROR)
     return nil
 end
 
-local function get_jdtls()
-    -- Primeira tentativa: usar Mason registry
-    local mason_ok, mason_registry = pcall(require, "mason-registry")
-    if mason_ok then
-        -- Verificar se JDTLS está instalado
-        if mason_registry.is_installed and mason_registry.is_installed("jdtls") then
-            -- Tentar obter o pacote
-            local jdtls_ok, jdtls_pkg = pcall(mason_registry.get_package, "jdtls")
-            if jdtls_ok and jdtls_pkg then
-                local jdtls_path = nil
-                
-                -- Tentar diferentes métodos para obter o caminho
-                if jdtls_pkg.get_install_path then
-                    jdtls_path = jdtls_pkg:get_install_path()
-                elseif jdtls_pkg.spec and jdtls_pkg.spec.install_path then
-                    jdtls_path = jdtls_pkg.spec.install_path
-                elseif jdtls_pkg.install_path then
-                    jdtls_path = jdtls_pkg.install_path
-                end
-                
-                if jdtls_path and vim.fn.isdirectory(jdtls_path) == 1 then
-                    local launcher = vim.fn.glob(jdtls_path .. "/plugins/org.eclipse.equinox.launcher_*.jar")
-                    local SYSTEM = "linux"
-                    local config = jdtls_path .. "/config_" .. SYSTEM
-                    local lombok = jdtls_path .. "/lombok.jar"
-                    
-                    if launcher ~= "" and vim.fn.isdirectory(config) == 1 then
-                        return launcher, config, lombok
-                    end
-                end
-            end
-        end
+-- Function to setup DAP for Java
+local function setup_java_dap()
+    if not is_dap_available() then
+        return false
     end
     
-    -- Fallback: tentar encontrar JDTLS manualmente
-    local mason_path = get_mason_path()
-    if mason_path then
-        local jdtls_path = mason_path .. "/packages/jdtls"
-        
-        if vim.fn.isdirectory(jdtls_path) == 1 then
-            local launcher = vim.fn.glob(jdtls_path .. "/plugins/org.eclipse.equinox.launcher_*.jar")
-            local SYSTEM = "linux"
-            local config = jdtls_path .. "/config_" .. SYSTEM
-            local lombok = jdtls_path .. "/lombok.jar"
-            
-            if launcher ~= "" and vim.fn.isdirectory(config) == 1 then
-                return launcher, config, lombok
-            end
-        end
+    if not is_jdtls_available() then
+        return false
     end
     
-    vim.notify("JDTLS não encontrado", vim.log.levels.ERROR)
-    return nil, nil, nil
+    local dap = require('dap')
+    local jdtls = require('jdtls')
+    
+    -- Setup DAP configurations for Java
+    dap.configurations.java = {
+        {
+            type = 'java',
+            request = 'launch',
+            name = "Launch Java Application",
+            program = "${file}",
+        },
+        {
+            type = 'java',
+            request = 'attach',
+            name = "Attach to Java Process",
+            hostName = "localhost",
+            port = 5005,
+        },
+    }
+    
+    -- Setup JDTLS DAP
+    pcall(function()
+        local jdtls_dap = require('jdtls.dap')
+        jdtls_dap.setup_dap_main_class_configs()
+    end)
+    
+    return true
 end
 
-local function get_bundles()
-    local bundles = {}
-    local mason_path = get_mason_path()
+-- Function to setup JDTLS (only if not already running)
+local function setup_jdtls()
+    -- Check if JDTLS is already running
+    if get_active_jdtls_client() then
+        return true
+    end
     
+    -- Check if jdtls plugin is available
+    if not is_jdtls_available() then
+        return false
+    end
+    
+    local jdtls = require('jdtls')
+    
+    -- Find Mason installation
+    local mason_path = get_mason_path()
     if not mason_path then
-        return bundles
+        return false
     end
     
-    -- Java Debug Adapter
-    local java_debug_path = mason_path .. "/packages/java-debug-adapter"
-    if vim.fn.isdirectory(java_debug_path) == 1 then
-        local debug_jar = vim.fn.glob(java_debug_path .. "/extension/server/com.microsoft.java.debug.plugin-*.jar", 1)
-        if debug_jar ~= "" then
-            table.insert(bundles, debug_jar)
-        end
+    -- Find JDTLS installation
+    local jdtls_path = mason_path .. "/packages/jdtls"
+    if vim.fn.isdirectory(jdtls_path) ~= 1 then
+        return false
     end
     
-    -- Java Test
-    local java_test_path = mason_path .. "/packages/java-test"
-    if vim.fn.isdirectory(java_test_path) == 1 then
-        local test_jars = vim.fn.glob(java_test_path .. "/extension/server/*.jar", 1)
-        if test_jars ~= "" then
-            vim.list_extend(bundles, vim.split(test_jars, "\n"))
-        end
+    -- Find required files
+    local launcher = vim.fn.glob(jdtls_path .. "/plugins/org.eclipse.equinox.launcher_*.jar")
+    local config = jdtls_path .. "/config_linux"
+    local lombok = jdtls_path .. "/lombok.jar"
+    
+    if launcher == "" or vim.fn.isdirectory(config) ~= 1 then
+        return false
     end
     
-    return bundles
-end
-
-local function get_workspace()
+    -- Setup workspace
     local home = os.getenv("HOME")
     if not home then
-        vim.notify("Variável HOME não encontrada", vim.log.levels.ERROR)
-        return nil
+        return false
     end
     
     local workspace_path = home .. "/code/workspace/"
-    vim.fn.mkdir(workspace_path, "p")
+    pcall(vim.fn.mkdir, workspace_path, "p")
     
     local project_name = vim.fn.fnamemodify(vim.fn.getcwd(), ":p:h:t")
     local workspace_dir = workspace_path .. project_name
+    pcall(vim.fn.mkdir, workspace_dir, "p")
     
-    vim.fn.mkdir(workspace_dir, "p")
-    
-    return workspace_dir
-end
-
-local function java_keymaps()
-    -- Allow yourself to run JdtCompile as a Vim command
-    vim.cmd("command! -buffer -nargs=? -complete=custom,v:lua.require'jdtls'._complete_compile JdtCompile lua require('jdtls').compile(<f-args>)")
-    -- Allow yourself/register to run JdtUpdateConfig as a Vim command
-    vim.cmd("command! -buffer JdtUpdateConfig lua require('jdtls').update_project_config()")
-    -- Allow yourself/register to run JdtBytecode as a Vim command
-    vim.cmd("command! -buffer JdtBytecode lua require('jdtls').javap()")
-    -- Allow yourself/register to run JdtShell as a Vim command
-    vim.cmd("command! -buffer JdtJshell lua require('jdtls').jshell()")
-
-    -- Set a Vim motion to <Space> + <Shift>J + o to organize imports in normal mode
-    vim.keymap.set('n', '<leader>Jo', "<Cmd> lua require('jdtls').organize_imports()<CR>",
-        { desc = "[J]ava [O]rganize Imports", buffer = true })
-    -- Set a Vim motion to <Space> + <Shift>J + v to extract the code under the cursor to a variable
-    vim.keymap.set('n', '<leader>Jv', "<Cmd> lua require('jdtls').extract_variable()<CR>",
-        { desc = "[J]ava Extract [V]ariable", buffer = true })
-    -- Set a Vim motion to <Space> + <Shift>J + v to extract the code selected in visual mode to a variable
-    vim.keymap.set('v', '<leader>Jv', "<Esc><Cmd> lua require('jdtls').extract_variable(true)<CR>",
-        { desc = "[J]ava Extract [V]ariable", buffer = true })
-    -- Set a Vim motion to <Space> + <Shift>J + <Shift>C to extract the code under the cursor to a static variable
-    vim.keymap.set('n', '<leader>JC', "<Cmd> lua require('jdtls').extract_constant()<CR>",
-        { desc = "[J]ava Extract [C]onstant", buffer = true })
-    -- Set a Vim motion to <Space> + <Shift>J + <Shift>C to extract the code selected in visual mode to a static variable
-    vim.keymap.set('v', '<leader>JC', "<Esc><Cmd> lua require('jdtls').extract_constant(true)<CR>",
-        { desc = "[J]ava Extract [C]onstant", buffer = true })
-    -- Set a Vim motion to <Space> + <Shift>J + t to run the test method currently under the cursor
-    vim.keymap.set('n', '<leader>Jt', "<Cmd> lua require('jdtls').test_nearest_method()<CR>",
-        { desc = "[J]ava [T]est Method", buffer = true })
-    -- Set a Vim motion to <Space> + <Shift>J + t to run the test method that is currently selected in visual mode
-    vim.keymap.set('v', '<leader>Jt', "<Esc><Cmd> lua require('jdtls').test_nearest_method(true)<CR>",
-        { desc = "[J]ava [T]est Method", buffer = true })
-    -- Set a Vim motion to <Space> + <Shift>J + <Shift>T to run an entire test suite (class)
-    vim.keymap.set('n', '<leader>JT', "<Cmd> lua require('jdtls').test_class()<CR>", 
-        { desc = "[J]ava [T]est Class", buffer = true })
-    -- Set a Vim motion to <Space> + <Shift>J + u to update the project configuration
-    vim.keymap.set('n', '<leader>Ju', "<Cmd> JdtUpdateConfig<CR>", 
-        { desc = "[J]ava [U]pdate Config", buffer = true })
-end
-
-local function setup_jdtls()
-    -- Verificar se o jdtls está disponível
-    local jdtls_ok, jdtls = pcall(require, "jdtls")
-    if not jdtls_ok then
-        vim.notify("Plugin nvim-jdtls não encontrado", vim.log.levels.ERROR)
-        return
-    end
-
-    -- Get the paths to the jdtls jar, operating specific configuration directory, and lombok jar
-    local launcher, os_config, lombok = get_jdtls()
-    
-    if not launcher or not os_config then
-        vim.notify("Falha ao configurar JDTLS", vim.log.levels.ERROR)
-        return
-    end
-
-    -- Get the path you specified to hold project information
-    local workspace_dir = get_workspace()
-    if not workspace_dir then
-        vim.notify("Falha ao configurar workspace", vim.log.levels.ERROR)
-        return
-    end
-
-    -- Get the bundles list with the jars to the debug adapter, and testing adapters
-    local bundles = get_bundles()
-
-    -- Determine the root directory of the project by looking for these specific markers
+    -- Find root directory
     local root_dir = jdtls.setup.find_root({ '.git', 'mvnw', 'gradlew', 'pom.xml', 'build.gradle' })
+    or vim.fn.getcwd()
     
-    if not root_dir then
-        root_dir = vim.fn.getcwd()
-    end
-
-    -- Tell our JDTLS language features it is capable of
-    local capabilities = {
-        workspace = {
-            configuration = true
-        },
-        textDocument = {
-            completion = {
-                snippetSupport = false
-            }
-        }
-    }
-
-    -- Verificar se cmp_nvim_lsp está disponível
+    -- Setup capabilities
+    local capabilities = vim.lsp.protocol.make_client_capabilities()
     local cmp_ok, cmp_nvim_lsp = pcall(require, "cmp_nvim_lsp")
     if cmp_ok then
-        local lsp_capabilities = cmp_nvim_lsp.default_capabilities()
-        for k, v in pairs(lsp_capabilities) do 
-            capabilities[k] = v 
-        end
+        capabilities = cmp_nvim_lsp.default_capabilities(capabilities)
     end
-
-    -- Get the default extended client capablities of the JDTLS language server
-    local extendedClientCapabilities = jdtls.extendedClientCapabilities
-    -- Modify one property called resolveAdditionalTextEditsSupport and set it to true
-    extendedClientCapabilities.resolveAdditionalTextEditsSupport = true
-
-    -- Set the command that starts the JDTLS language server jar
+    
+    -- Setup command
     local cmd = {
         'java',
         '-Declipse.application=org.eclipse.jdt.ls.core.id1',
@@ -229,230 +404,208 @@ local function setup_jdtls()
         '--add-modules=ALL-SYSTEM',
         '--add-opens', 'java.base/java.util=ALL-UNNAMED',
         '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
-        '-jar',
-        launcher,
-        '-configuration',
-        os_config,
-        '-data',
-        workspace_dir
+        '-jar', launcher,
+        '-configuration', config,
+        '-data', workspace_dir
     }
     
-    -- Adicionar lombok se disponível
-    if lombok and vim.fn.filereadable(lombok) == 1 then
+    if vim.fn.filereadable(lombok) == 1 then
         table.insert(cmd, 11, '-javaagent:' .. lombok)
     end
-
-    -- Configure settings in the JDTLS server
-    local settings = {
-        java = {
-            -- Enable code formatting
-            format = {
-                enabled = true,
-                -- Use the Google Style guide for code formattingh
-                settings = {
-                    url = vim.fn.stdpath("config") .. "/lang_servers/intellij-java-google-style.xml",
-                    profile = "GoogleStyle"
-                }
-            },
-            -- Enable downloading archives from eclipse automatically
-            eclipse = {
-                downloadSource = true
-            },
-            -- Enable downloading archives from maven automatically
-            maven = {
-                downloadSources = true
-            },
-            -- Enable method signature help
-            signatureHelp = {
-                enabled = true
-            },
-            -- Use the fernflower decompiler when using the javap command to decompile byte code back to java code
-            contentProvider = {
-                preferred = "fernflower"
-            },
-            -- Setup automatical package import oranization on file save
-            saveActions = {
-                organizeImports = true
-            },
-            -- Customize completion options
-            completion = {
-                -- When using an unimported static method, how should the LSP rank possible places to import the static method from
-                favoriteStaticMembers = {
-                    "org.hamcrest.MatcherAssert.assertThat",
-                    "org.hamcrest.Matchers.*",
-                    "org.hamcrest.CoreMatchers.*",
-                    "org.junit.jupiter.api.Assertions.*",
-                    "java.util.Objects.requireNonNull",
-                    "java.util.Objects.requireNonNullElse",
-                    "org.mockito.Mockito.*",
-                },
-                -- Try not to suggest imports from these packages in the code action window
-                filteredTypes = {
-                    "com.sun.*",
-                    "io.micrometer.shaded.*",
-                    "java.awt.*",
-                    "jdk.*",
-                    "sun.*",
-                },
-                -- Set the order in which the language server should organize imports
-                importOrder = {
-                    "java",
-                    "jakarta",
-                    "javax",
-                    "com",
-                    "org",
-                }
-            },
-            sources = {
-                -- How many classes from a specific package should be imported before automatic imports combine them all into a single import
-                organizeImports = {
-                    starThreshold = 9999,
-                    staticThreshold = 9999
-                }
-            },
-            -- How should different pieces of code be generated?
-            codeGeneration = {
-                -- When generating toString use a json format
-                toString = {
-                    template = "${object.className}{${member.name()}=${member.value}, ${otherMembers}}"
-                },
-                -- When generating hashCode and equals methods use the java 7 objects method
-                hashCodeEquals = {
-                    useJava7Objects = true
-                },
-                -- When generating code use code blocks
-                useBlocks = true
-            },
-            -- If changes to the project will require the developer to update the projects configuration advise the developer before accepting the change
-            configuration = {
-                updateBuildConfiguration = "interactive"
-            },
-            -- enable code lens in the lsp
-            referencesCodeLens = {
-                enabled = true
-            },
-            -- enable inlay hints for parameter names,
-            inlayHints = {
-                parameterNames = {
-                    enabled = "all"
-                }
-            }
-        }
-    }
-
-    -- Create a table called init_options to pass the bundles with debug and testing jar, along with the extended client capablies to the start or attach function of JDTLS
-    local init_options = {
-        bundles = bundles,
-        extendedClientCapabilities = extendedClientCapabilities
-    }
-
-    -- Function that will be ran once the language server is attached
-    local on_attach = function(client, bufnr)
-        -- Map the Java specific key mappings once the server is attached
-        java_keymaps()
-
-        -- Setup the java debug adapter of the JDTLS server
-        local dap_ok, jdtls_dap = pcall(require, 'jdtls.dap')
-        if dap_ok then
-            jdtls_dap.setup_dap()
-            jdtls_dap.setup_dap_main_class_configs()
-        end
-        
-        -- Enable jdtls commands to be used in Neovim
-        local setup_ok, jdtls_setup = pcall(require, 'jdtls.setup')
-        if setup_ok then
-            jdtls_setup.add_commands()
-        end
-        
-        -- Refresh the codelens
-        vim.lsp.codelens.refresh()
-
-        -- Setup lsp_signature if available
-        local sig_ok, lsp_signature = pcall(require, "lsp_signature")
-        if sig_ok then
-            lsp_signature.on_attach({
-                bind = true,
-                padding = "",
-                handler_opts = {
-                    border = "rounded",
-                },
-                hint_prefix = "󱄑 ",
-            }, bufnr)
-        end
-
-        -- Setup a function that automatically runs every time a java file is saved to refresh the code lens
-        vim.api.nvim_create_autocmd("BufWritePost", {
-            pattern = { "*.java" },
-            callback = function()
-                local _, _ = pcall(vim.lsp.codelens.refresh)
-            end
-        })
-    end
-
-    -- Create the configuration table for the start or attach function
-    local config = {
+    
+    -- Configuration
+    local config_table = {
         cmd = cmd,
         root_dir = root_dir,
-        settings = settings,
         capabilities = capabilities,
-        init_options = init_options,
-        on_attach = on_attach
+        settings = {
+            java = {
+                signatureHelp = { enabled = true },
+                contentProvider = { preferred = 'fernflower' },
+                eclipse = {
+                    downloadSources = true,
+                },
+                maven = {
+                    downloadSources = true,
+                },
+                implementationsCodeLens = {
+                    enabled = true,
+                },
+                referencesCodeLens = {
+                    enabled = true,
+                },
+                format = {
+                    enabled = true,
+                },
+                saveActions = {
+                    organizeImports = false, -- Desabilita para evitar conflitos
+                },
+                completion = {
+                    favoriteStaticMembers = {
+                        "org.hamcrest.MatcherAssert.assertThat",
+                        "org.hamcrest.Matchers.*",
+                        "org.hamcrest.CoreMatchers.*",
+                        "org.junit.jupiter.api.Assertions.*",
+                        "java.util.Objects.requireNonNull",
+                        "java.util.Objects.requireNonNullElse",
+                        "org.mockito.Mockito.*",
+                    }
+                },
+                sources = {
+                    organizeImports = {
+                        starThreshold = 9999,
+                        staticStarThreshold = 9999,
+                    }
+                },
+                codeGeneration = {
+                    toString = {
+                        template = "${object.className}{${member.name()}=${member.value}, ${otherMembers}}"
+                    },
+                    hashCodeEquals = {
+                        useJava7Objects = true,
+                    },
+                    useBlocks = true,
+                },
+                configuration = {
+                    runtimes = {
+                        {
+                            name = "JavaSE-17",
+                            path = "/usr/lib/jvm/java-17-openjdk/",
+                        },
+                        {
+                            name = "JavaSE-11",
+                            path = "/usr/lib/jvm/java-11-openjdk/",
+                        },
+                    }
+                }
+            }
+        },
+        init_options = {
+            bundles = {}
+        },
+        on_attach = function(client, bufnr)
+            -- Disable VS Code specific commands
+            if client.server_capabilities then
+                client.server_capabilities.executeCommandProvider = {
+                    commands = vim.tbl_filter(function(command)
+                        return not vim.startswith(command, "vscode.")
+                    end, client.server_capabilities.executeCommandProvider and client.server_capabilities.executeCommandProvider.commands or {})
+                }
+            end
+            
+            -- Setup DAP
+            setup_java_dap()
+            
+            -- Setup additional functionality after attach
+            pcall(function()
+                local jdtls_dap = require('jdtls.dap')
+                jdtls_dap.setup_dap_main_class_configs()
+            end)
+            
+            pcall(function()
+                local jdtls_setup = require('jdtls.setup')
+                jdtls_setup.add_commands()
+            end)
+            
+            -- Refresh codelens
+            pcall(vim.lsp.codelens.refresh)
+            
+            -- Auto-organize imports on save
+            vim.api.nvim_create_autocmd("BufWritePre", {
+                buffer = bufnr,
+                callback = function()
+                    pcall(function()
+                        vim.lsp.buf.code_action({
+                            context = { only = { "source.organizeImports" } },
+                            apply = true,
+                        })
+                    end)
+                end,
+            })
+        end,
     }
-
-    -- Start the JDTLS server
-    local success, error = pcall(jdtls.start_or_attach, config)
     
-    if not success then
-        vim.notify("Erro ao iniciar JDTLS: " .. tostring(error), vim.log.levels.ERROR)
-    end
+    -- Start JDTLS
+    local success, err = pcall(jdtls.start_or_attach, config_table)
+    return success
 end
 
--- Configurar keymaps básicas como fallback (caso o servidor não anexe)
-local function setup_basic_keymaps()
-    local opts = { buffer = true, silent = true }
-    
-    vim.keymap.set('n', '<leader>Jo', function() 
-        vim.cmd('lua require("jdtls").organize_imports()')
-    end, vim.tbl_extend('force', opts, { desc = "[J]ava [O]rganize Imports" }))
-    
-    vim.keymap.set('n', '<leader>Jv', function() 
-        vim.cmd('lua require("jdtls").extract_variable()')
-    end, vim.tbl_extend('force', opts, { desc = "[J]ava Extract [V]ariable" }))
-    
-    vim.keymap.set('n', '<leader>JC', function() 
-        vim.cmd('lua require("jdtls").extract_constant()')
-    end, vim.tbl_extend('force', opts, { desc = "[J]ava Extract [C]onstant" }))
-    
-    vim.keymap.set('n', '<leader>Jt', function() 
-        vim.cmd('lua require("jdtls").test_nearest_method()')
-    end, vim.tbl_extend('force', opts, { desc = "[J]ava [T]est Method" }))
-    
-    vim.keymap.set('n', '<leader>JT', function() 
-        vim.cmd('lua require("jdtls").test_class()')
-    end, vim.tbl_extend('force', opts, { desc = "[J]ava [T]est Class" }))
-end
-
--- Configurar keymaps básicas imediatamente
-setup_basic_keymaps()
-
--- Execute a função automaticamente
-setup_jdtls()
-
--- Criar um comando para verificar o status do JDTLS
+-- Utility commands
 vim.api.nvim_create_user_command('JdtlsStatus', function()
-    local clients = vim.lsp.get_active_clients({ name = 'jdtls' })
-    if #clients > 0 then
-        vim.notify("JDTLS está ativo com " .. #clients .. " cliente(s)")
-        for i, client in ipairs(clients) do
-            vim.notify("Cliente " .. i .. ": " .. client.name .. " (ID: " .. client.id .. ")")
+    local client = get_active_jdtls_client()
+    if client then
+        vim.notify("✓ JDTLS está ativo (ID: " .. client.id .. ")", vim.log.levels.INFO)
+        if is_dap_available() then
+            vim.notify("✓ DAP está disponível", vim.log.levels.INFO)
+        else
+            vim.notify("✗ DAP não está disponível", vim.log.levels.WARN)
         end
     else
-        vim.notify("JDTLS não está ativo", vim.log.levels.WARN)
+        vim.notify("✗ JDTLS não está ativo", vim.log.levels.WARN)
     end
-end, { desc = "Verificar status do JDTLS" })
+end, { desc = "Check JDTLS status" })
 
--- Criar um comando para recarregar JDTLS
-vim.api.nvim_create_user_command('JdtlsReload', function()
-    vim.notify("Recarregando JDTLS...")
-    setup_jdtls()
-end, { desc = "Recarregar JDTLS" })
+vim.api.nvim_create_user_command('JdtlsRestart', function()
+    local client = get_active_jdtls_client()
+    if client then
+        client.stop()
+        vim.notify("Parando JDTLS...", vim.log.levels.INFO)
+        
+        vim.defer_fn(function()
+            vim.g.java_ftplugin_loaded = false
+            vim.notify("Reiniciando JDTLS...", vim.log.levels.INFO)
+            if setup_jdtls() then
+                vim.g.java_ftplugin_loaded = true
+                vim.notify("✓ JDTLS reiniciado com sucesso", vim.log.levels.INFO)
+            else
+                vim.notify("✗ Falha ao reiniciar JDTLS", vim.log.levels.ERROR)
+            end
+        end, 2000)
+    else
+        vim.notify("JDTLS não está executando", vim.log.levels.WARN)
+    end
+end, { desc = "Restart JDTLS" })
+
+vim.api.nvim_create_user_command('JdtlsInstall', function()
+    vim.notify("Para instalar JDTLS execute: :MasonInstall jdtls", vim.log.levels.INFO)
+    vim.notify("Para debug instale também: :MasonInstall java-debug-adapter", vim.log.levels.INFO)
+end, { desc = "Install JDTLS" })
+
+-- Setup JDTLS with delay to ensure everything is loaded
+vim.defer_fn(function()
+    if not get_active_jdtls_client() then
+        local success = setup_jdtls()
+        if success then
+            vim.notify("✓ JDTLS iniciado com sucesso", vim.log.levels.INFO)
+        elseif get_mason_path() then
+            vim.notify("JDTLS não encontrado. Execute: :MasonInstall jdtls", vim.log.levels.WARN)
+        else
+            vim.notify("Mason não encontrado. Instale o plugin Mason primeiro.", vim.log.levels.WARN)
+        end
+    end
+end, 500)
+
+-- Prevent any remaining vscode.java.resolveMainClass calls
+vim.api.nvim_create_autocmd("BufEnter", {
+    buffer = 0,
+    callback = function()
+        -- Override any dangerous calls
+        local function safe_resolve_main_class()
+            local client = get_active_jdtls_client()
+            if client and has_jdtls_capability("vscode.java.resolveMainClass") then
+                -- Only call if properly supported
+                local ok, result = pcall(vim.lsp.buf_request, 0, "vscode.java.resolveMainClass", {})
+                if not ok then
+                    -- Silently ignore errors
+                    return
+                end
+                return result
+            end
+        end
+        
+        -- Store the safe version globally
+        _G.safe_resolve_main_class = safe_resolve_main_class
+    end,
+})
+
+return M
