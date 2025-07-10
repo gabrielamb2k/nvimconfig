@@ -16,7 +16,19 @@ return {
 		config = function()
 			-- ensure that we have lua language server, typescript launguage server, java language server, and java test language server are installed
 			require("mason-lspconfig").setup({
-				ensure_installed = { "lua_ls", "ts_ls", "jdtls", "cssls", "gopls" },
+				ensure_installed = { "lua_ls", "ts_ls", "jdtls", "cssls" }, -- Removed gopls completely
+				automatic_installation = true,
+				-- Explicitly disable gopls automatic setup
+				handlers = {
+					-- Default handler for all servers
+					function(server_name)
+						if server_name ~= "gopls" then
+							require("lspconfig")[server_name].setup({})
+						end
+					end,
+					-- Disable gopls handler completely
+					["gopls"] = function() end,
+				},
 			})
 		end,
 	},
@@ -148,33 +160,55 @@ return {
 				capabilities = capabilities,
 			})
 
-			-- setup the go language server with proper root_dir configuration
-			lspconfig.gopls.setup({
-				capabilities = capabilities,
-				-- Use the built-in root_dir function which is more robust
-				root_dir = util.root_pattern("go.mod", "go.sum", ".git"),
-				-- Ensure we're only attaching to Go files
-				filetypes = { "go", "gomod", "gowork", "gotmpl" },
-				-- Add on_attach function to handle buffer-specific setup
-				on_attach = function(client, bufnr)
-					-- Enable completion triggered by <c-x><c-o>
-					vim.api.nvim_buf_set_option(bufnr, 'omnifunc', 'v:lua.vim.lsp.omnifunc')
-				end,
-				settings = {
-					gopls = {
-						analyses = {
-							unusedparams = true,
-						},
-						staticcheck = true,
-						gofumpt = true,
-						-- Additional settings for better Go support
-						usePlaceholders = true,
-						completeUnimported = true,
-						matcher = "fuzzy",
-						deepCompletion = true,
-					},
-				},
-			})
+			-- COMPLETELY MANUAL gopls setup to bypass the buggy lspconfig version
+			local function setup_gopls_manual()
+				vim.api.nvim_create_autocmd("FileType", {
+					pattern = "go",
+					callback = function(args)
+						-- Only start if gopls isn't already running for this buffer
+						local clients = vim.lsp.get_clients({ bufnr = args.buf, name = "gopls" })
+						if #clients > 0 then
+							return
+						end
+
+						-- Find project root
+						local root_dir = vim.fn.getcwd()
+						local current_dir = vim.fn.expand("%:p:h")
+						
+						-- Look for go.mod, go.sum, or .git
+						for _, pattern in ipairs({ "go.mod", "go.sum", ".git" }) do
+							local found = vim.fn.findfile(pattern, current_dir .. ";")
+							if found ~= "" then
+								root_dir = vim.fn.fnamemodify(found, ":h")
+								break
+							end
+						end
+
+						vim.lsp.start({
+							name = "gopls",
+							cmd = { "gopls" },
+							root_dir = root_dir,
+							capabilities = capabilities,
+							settings = {
+								gopls = {
+									analyses = {
+										unusedparams = true,
+									},
+									staticcheck = true,
+									gofumpt = true,
+									usePlaceholders = true,
+									completeUnimported = true,
+									matcher = "fuzzy",
+									deepCompletion = true,
+								},
+							},
+						})
+					end,
+				})
+			end
+
+			-- Setup manual gopls
+			setup_gopls_manual()
 
 			for _, sign in ipairs(vim.tbl_get(vim.diagnostic.config(), "signs", "values") or {}) do
 				vim.fn.sign_define(sign.name, { texthl = sign.name, text = sign.text, numhl = sign.name })
@@ -232,6 +266,23 @@ return {
 			vim.keymap.set("n", "<leader>dgl", function()
 				require("dap-go").debug_last_test()
 			end, { desc = "[D]ebug [G]o [L]ast Test" })
+
+			-- Fix syntax highlighting for LSP
+			vim.api.nvim_create_autocmd("LspAttach", {
+				callback = function(args)
+					local client = vim.lsp.get_client_by_id(args.data.client_id)
+					if client and client.server_capabilities.documentHighlightProvider then
+						vim.api.nvim_create_autocmd({ "CursorHold", "CursorHoldI" }, {
+							buffer = args.buf,
+							callback = vim.lsp.buf.document_highlight,
+						})
+						vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+							buffer = args.buf,
+							callback = vim.lsp.buf.clear_references,
+						})
+					end
+				end,
+			})
 		end,
 	},
 }
