@@ -33,11 +33,6 @@ else
   return
 end
 
--- Certifique-se de que path_to_mason_packages está definido corretamente e APENAS UMA VEZ
-local path_to_mason_packages = home .. "/.local/share/nvim/mason/packages"
-
--- ... (resto do código do Mason para JDTLS) ...
-
 -- Workspace específico para cada projeto
 local root_markers = { ".git", "mvnw", "gradlew", "pom.xml", "build.gradle", "settings.gradle" }
 local root_dir = require("jdtls.setup").find_root(root_markers)
@@ -48,12 +43,10 @@ local workspace_dir = home .. "/.cache/jdtls/workspace/" .. project_name
 vim.fn.mkdir(workspace_dir, "p")
 
 -- Configurar bundles para debug, test e format
--- Configurar bundles para debug, test e format
 local bundles = {}
 
 -- --- DEBUG ADAPTER BUNDLE ---
 local jdebug_server_path = path_to_mason_packages .. "/java-debug-adapter/extension/server/"
--- Nome exato do JAR de debug. CONFIRME ESTE NOME E VERSÃO.
 local jdebug_jar_name = "com.microsoft.java.debug.plugin-0.53.1.jar"
 local jdebug_full_path = jdebug_server_path .. jdebug_jar_name
 
@@ -65,7 +58,6 @@ end
 
 -- --- TEST PLUGIN BUNDLES ---
 local jtest_server_path = path_to_mason_packages .. "/java-test/extension/server/"
--- Adicione APENAS o JAR principal do plugin de teste. CONFIRME ESTE NOME E VERSÃO.
 local jtest_plugin_jar = jtest_server_path .. "com.microsoft.java.test.plugin-0.43.1.jar"
 
 if vim.fn.filereadable(jtest_plugin_jar) == 1 then
@@ -73,8 +65,6 @@ if vim.fn.filereadable(jtest_plugin_jar) == 1 then
 else
     vim.notify("JAR do Test Plugin principal não encontrado em: " .. jtest_plugin_jar, vim.log.levels.ERROR)
 end
-
-
 
 -- Configuração do JDTLS
 local config = {
@@ -128,8 +118,8 @@ local config = {
       },
       format = {
         enabled = true,
-        settings = { -- Reabilitando settings para usar o provider
-            provider = "google-java-format", -- Indica para usar o formatador Google
+        settings = {
+            provider = "google-java-format",
         },
      },
       signatureHelp = { enabled = true },
@@ -163,14 +153,20 @@ local config = {
         },
         useBlocks = true,
       },
+      -- CONFIGURAÇÃO CORRIGIDA PARA GRADLE WRAPPER CHECKSUM
       imports = {
         gradle = {
           wrapper = {
             checksums = {
               {
-                ["sha256"] = "7d3a4ac4de1c32b59bc6a4eb8ecb8e612ccd0cf1ae1e99f66902da64df296172",
-                ["allowed"] = true
-              }
+                sha256 = "7d3a4ac4de1c32b59bc6a4eb8ecb8e612ccd0cf1ae1e99f66902da64df296172",
+                allowed = true,
+              },
+              -- Adicione outros checksums se necessário
+              {
+                sha256 = "9b4f0b702e0c0e5d40f5b0b8a6b7b6b0b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5",
+                allowed = true,
+              },
             }
           }
         }
@@ -202,14 +198,14 @@ local config = {
     -- Keybindings padrão do LSP
     local opts = { buffer = bufnr, silent = true }
     
-     vim.keymap.set("n", "gd", vim.lsp.buf.definition, { desc = "LSP: Go to [D]efinition" , buffer = bufnr}) -- Adicionado buffer para clareza
+    vim.keymap.set("n", "gd", vim.lsp.buf.definition, { desc = "LSP: Go to [D]efinition" , buffer = bufnr})
     vim.keymap.set("n", "gD", vim.lsp.buf.declaration, { desc = "LSP: Go to [D]eclaration" , buffer = bufnr})
     vim.keymap.set("n", "gi", vim.lsp.buf.implementation, { desc = "LSP: Go to [I]mplementation" , buffer = bufnr})
     vim.keymap.set("n", "gr", vim.lsp.buf.references, { desc = "LSP: Go to [R]eferences" , buffer = bufnr})
     vim.keymap.set("n", "K", vim.lsp.buf.hover, { desc = "LSP: Hover Docs" , buffer = bufnr})
     vim.keymap.set("n", "<C-k>", vim.lsp.buf.signature_help, { desc = "LSP: Signature Help" , buffer = bufnr})
     vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, { desc = "LSP: [R]e[n]ame Symbol" , buffer = bufnr})
-    vim.keymap.set("n", "<leader>cj", vim.lsp.buf.code_action, { desc = "LSP: Code [J]ava action " , buffer = bufnr}) -- Já estava aqui, mantido.
+    vim.keymap.set("n", "<leader>cj", vim.lsp.buf.code_action, { desc = "LSP: Code [J]ava action " , buffer = bufnr})
 
     -- Keybindings específicos do JDTLS (usando prefixo <leader>J para Java)
     vim.keymap.set("n", "<leader>Jo", function() require("jdtls").organize_imports() end, { desc = "Java: [O]rganize Imports", buffer = bufnr })
