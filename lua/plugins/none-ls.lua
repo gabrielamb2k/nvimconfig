@@ -6,7 +6,6 @@ return {
   config = function()
     local null_ls = require("null-ls")
 
-
     -- =========================================================
 
     local home = os.getenv("HOME") 
@@ -18,7 +17,8 @@ return {
 
       sources = {
         -- JavaScript/TypeScript
-        eslint_d_diagnostics, -- Agora esta referência está correta
+        -- Correção: usando require para importar do none-ls-extras
+        require("none-ls.diagnostics.eslint_d"),
         null_ls.builtins.formatting.prettier.with({
           filetypes = {
             "javascript", "typescript", "javascriptreact", "typescriptreact",
@@ -40,18 +40,21 @@ return {
         null_ls.builtins.code_actions.impl,
 
         -- === GOOGLE JAVA FORMAT ===
-        null_ls.builtins.formatting.google_java_format.with({
-          command = "java",
-          args = {
-            "-jar",
-            home .. "/.config/nvim/lang_servers/google-java-format-1.21.0-all-deps.jar", -- << CONFIRME O NOME E CAMINHO
-            "--replace", 
-            "$FILENAME", 
-          },
+        -- Usando shell script inline para contornar o problema
+        {
+          method = null_ls.methods.FORMATTING,
           filetypes = { "java" },
-        }),
+          generator = null_ls.formatter({
+            command = "sh",
+            args = {
+              "-c",
+              "java -jar " .. home .. "/.config/nvim/lang_servers/google-java-format-1.21.0-all-deps.jar -",
+            },
+            to_stdin = true,
+          }),
+        },
         -- === FIM DO GOOGLE JAVA FORMAT ===
-      }, -- <--- Fechamento da tabela 'sources'
+      },
 
       on_attach = function(client, bufnr)
         if client.name == "null-ls" then
@@ -61,13 +64,13 @@ return {
       end,
     })
 
-    -- Keymaps (mantidos os mesmos)
+    -- Keymaps
     vim.keymap.set("n", "<leader>cf", vim.lsp.buf.format, { desc = "[C]ode [F]ormat" })
     vim.keymap.set("v", "<leader>cf", function()
       vim.lsp.buf.format({ range = true })
     end, { desc = "[C]ode [F]ormat range" })
 
-    -- Auto-format on save (mantido como opcional)
+    -- Auto-format on save (opcional)
     -- vim.api.nvim_create_autocmd("BufWritePre", {
     --   callback = function()
     --     vim.lsp.buf.format({ async = false })
