@@ -30,7 +30,6 @@ return {
     })
 
     -- Mapeamento para abrir o Neo-tree
-    vim.keymap.set("n", "<leader>n", ":Neotree filesystem reveal left<CR>", {})
-    vim.keymap.set("n", "<leader>nc", ":Neotree close<CR>", {})
+    vim.keymap.set("n", "<leader>n", "<cmd>Neotree toggle<cr>", { desc = "Tree" })
   end,
 }
