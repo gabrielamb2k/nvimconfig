@@ -11,7 +11,7 @@ return {
     "williamboman/mason-lspconfig.nvim",
     config = function()
       require("mason-lspconfig").setup({
-        ensure_installed = { "lua_ls", "ts_ls", "jdtls", "cssls" },
+        ensure_installed = { "lua_ls", "ts_ls", "jdtls", "cssls", "yamlls"},
         automatic_installation = true,
         handlers = {
           function(server_name)
@@ -110,6 +110,47 @@ return {
       lspconfig.ts_ls.setup({ capabilities = capabilities })
       lspconfig.cssls.setup({ capabilities = capabilities })
 
+      -- Configuração específica para YAML Language Server
+      lspconfig.yamlls.setup({
+        capabilities = capabilities,
+        settings = {
+          yaml = {
+            schemas = {
+              -- Schema para Spring Boot application properties
+              ["https://json.schemastore.org/spring-boot-application.json"] = {
+                "/application.yml",
+                "/application.yaml",
+                "/application-*.yml",
+                "/application-*.yaml"
+              },
+              -- Schema para GitHub Actions
+              ["https://json.schemastore.org/github-workflow.json"] = "/.github/workflows/*",
+              -- Schema para Docker Compose
+              ["https://json.schemastore.org/docker-compose.json"] = {
+                "/docker-compose.yml",
+                "/docker-compose.yaml",
+                "/compose.yml",
+                "/compose.yaml"
+              },
+              -- Schema para Kubernetes
+              ["https://json.schemastore.org/kustomization.json"] = "/kustomization.yaml",
+            },
+            validate = true,
+            completion = true,
+            hover = true,
+            format = {
+              enable = true,
+              singleQuote = false,
+              bracketSpacing = true,
+            },
+            schemaStore = {
+              enable = true,
+              url = "https://www.schemastore.org/api/json/catalog.json",
+            },
+          },
+        },
+      })
+
       local function setup_gopls_manual()
         vim.api.nvim_create_autocmd("FileType", {
           pattern = "go",
@@ -149,6 +190,18 @@ return {
       end
 
       setup_gopls_manual()
+
+      -- Configuração específica para arquivos YAML
+      vim.api.nvim_create_autocmd("FileType", {
+        pattern = { "yaml", "yml" },
+        callback = function()
+          vim.opt_local.shiftwidth = 2
+          vim.opt_local.tabstop = 2
+          vim.opt_local.softtabstop = 2
+          vim.opt_local.expandtab = true
+          vim.opt_local.foldmethod = "indent"
+        end,
+      })
 
       for _, sign in ipairs(vim.tbl_get(vim.diagnostic.config(), "signs", "values") or {}) do
         vim.fn.sign_define(sign.name, { texthl = sign.name, text = sign.text, numhl = sign.name })
@@ -221,4 +274,3 @@ return {
     end,
   },
 }
-
